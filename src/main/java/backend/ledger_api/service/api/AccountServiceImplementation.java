@@ -41,7 +41,7 @@ public class AccountServiceImplementation implements AccountService {
     @Override
     @Transactional
     public AccountResponse openAccount(CreateAccountRequest request, String idempotencyKey) {
-        if (request == null || request.currency() == null || request.overdraftLimit() == null)
+        if (request == null || request.currency() == null)
             throw new AccountRequestException("account.validation.required");
 
         if (idempotencyKey == null || idempotencyKey.isBlank() || idempotencyKey.length() > 255)
@@ -51,7 +51,7 @@ public class AccountServiceImplementation implements AccountService {
         Currency currency = Currency.find(currencyCode)
                 .orElseThrow(() -> new AccountRequestException("account.currency.unsupported", currencyCode));
 
-        BigDecimal limit = request.overdraftLimit();
+        BigDecimal limit = request.overdraftLimit() == null ? BigDecimal.ZERO : request.overdraftLimit();
         int scale = currency.minorUnitScale();
         if (limit.signum() < 0 || limit.scale() > scale)
             throw new AccountRequestException("account.overdraft.invalid", currency.name(), scale);

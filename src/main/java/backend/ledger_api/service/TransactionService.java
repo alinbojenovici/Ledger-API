@@ -8,6 +8,8 @@ import java.util.UUID;
 public interface TransactionService {
     TransactionResponse recordTransaction(RecordTransactionRequest request, String idempotencyKey);
 
+    TransactionResponse recordPaymentSettlement(RecordTransactionRequest request, String paymentId);
+
     TransactionResponse getTransaction(UUID transactionId);
 
     TransactionResponse reverseTransaction(UUID transactionId, String idempotencyKey);

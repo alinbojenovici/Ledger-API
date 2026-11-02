@@ -36,22 +36,49 @@ public class TransactionServiceImplementation implements TransactionService {
     @Override
     @Transactional
     public TransactionResponse recordTransaction(RecordTransactionRequest request, String key) {
+        return recordWithIdempotencyScope(request, key, IDEMPOTENCY_SCOPE);
+    }
+
+    @Override
+    @Transactional
+    public TransactionResponse recordPaymentSettlement(RecordTransactionRequest request, String paymentId) {
+        return recordWithIdempotencyScope(request, "payment:" + paymentId, IdempotencyScope.PAYMENT_SETTLEMENT);
+    }
+
+    private TransactionResponse recordWithIdempotencyScope(RecordTransactionRequest request, String key, IdempotencyScope idempotencyScope) {
         if (request == null || request.entries() == null || request.entries().size() < 2)
             throw new AccountRequestException("transaction.entries.minimum");
 
         if (key == null || key.isBlank() || key.length() > 255)
             throw new AccountRequestException("idempotency.key.required");
 
-        List<UUID> accountIds = request.entries().stream().map(RecordTransactionRequest.EntryRequest::accountId).filter(Objects::nonNull).distinct().sorted().toList();
-
-        if (accountIds.size() != request.entries().stream().map(RecordTransactionRequest.EntryRequest::accountId).distinct().count())
+        if (request.entries().stream().anyMatch(Objects::isNull))
             throw new AccountRequestException("transaction.entry.invalid");
+        if (request.description() == null || request.description().isBlank() || request.description().length() > 500)
+            throw new AccountRequestException("transaction.description.invalid");
+        if (request.entries().stream().anyMatch(entry -> entry.accountId() == null || entry.direction() == null || entry.amount() == null))
+            throw new AccountRequestException("transaction.entry.invalid");
+
+        String fingerprint = hash(request.description() + "|" + request.entries());
+        var existing = idempotency.findByScopeAndIdempotencyKey(idempotencyScope.name(), key);
+        if (existing.isPresent()) {
+            if (!existing.get().getRequestHash().equals(fingerprint))
+                throw new AccountConflictException("idempotency.key.conflict");
+            return read(existing.get().getResponseBody());
+        }
+        List<UUID> accountIds = request.entries().stream().map(RecordTransactionRequest.EntryRequest::accountId).distinct().sorted().toList();
 
         var locked = accounts.findAndLockAllByIdOrdered(accountIds);
 
         if (locked.size() != accountIds.size())
             throw new AccountNotFoundException("account.not.found");
 
+        var retryAfterLock = idempotency.findByScopeAndIdempotencyKey(idempotencyScope.name(), key);
+        if (retryAfterLock.isPresent()) {
+            if (!retryAfterLock.get().getRequestHash().equals(fingerprint))
+                throw new AccountConflictException("idempotency.key.conflict");
+            return read(retryAfterLock.get().getResponseBody());
+        }
         Map<UUID, Account> byId = new HashMap<>();
         locked.forEach(a -> byId.put(a.getId(), a));
         String currency = locked.get(0).getCurrency();
@@ -81,13 +108,6 @@ public class TransactionServiceImplementation implements TransactionService {
         if (debit != credit)
             throw new AccountRequestException("transaction.not.balanced");
 
-        String fingerprint = hash(request.description() + "|" + request.entries());
-        var prior = idempotency.findByScopeAndIdempotencyKey(IDEMPOTENCY_SCOPE.name(), key);
-        if (prior.isPresent()) {
-            if (!prior.get().getRequestHash().equals(fingerprint))
-                throw new AccountConflictException("idempotency.key.conflict");
-            return read(prior.get().getResponseBody());
-        }
         Map<UUID, Long> delta = new HashMap<>();
         for (int n = 0; n < request.entries().size(); n++) {
             var e = request.entries().get(n);
@@ -108,7 +128,7 @@ public class TransactionServiceImplementation implements TransactionService {
         transactions.saveAndFlush(tx);
         TransactionResponse result = response(tx);
         try {
-            idempotency.save(new IdempotencyRecord(IDEMPOTENCY_SCOPE.name(), key, fingerprint, tx.getId(), objectMapper.writeValueAsString(result)));
+            idempotency.save(new IdempotencyRecord(idempotencyScope.name(), key, fingerprint, tx.getId(), objectMapper.writeValueAsString(result)));
         } catch (Exception ex) {
             throw new IllegalStateException(ex);
         }
