@@ -1,0 +1,148 @@
+openapi: 3.1.0
+info:
+  title: Ledger API
+  version: 1.0.0
+  description: Initial contract for opening accounts and recording immutable balanced ledger transactions.
+servers:
+  - url: /api/v1
+paths:
+  /accounts:
+    post:
+      operationId: openAccount
+      summary: Open an account with a zero balance
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAccountRequest' }
+      responses:
+        '201':
+          description: Account created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Account' }
+        '400': { description: Invalid currency or overdraft limit }
+        '409': { description: Idempotency key reused for a different request }
+    get:
+      operationId: getAccount
+      summary: Read account balance and configuration
+      parameters:
+        - in: query
+          name: accountId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Account found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Account' }
+        '404': { description: Account not found }
+  /transactions:
+    post:
+      operationId: recordTransaction
+      summary: Record an immutable balanced transaction atomically
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecordTransactionRequest' }
+      responses:
+        '201':
+          description: Transaction recorded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Transaction' }
+        '400': { description: Invalid entries, amounts, currencies, or unbalanced totals }
+        '404': { description: One or more accounts do not exist }
+        '409': { description: Overdraft limit exceeded or idempotency conflict }
+    get:
+      operationId: getTransaction
+      summary: Read a transaction and its entries
+      parameters:
+        - in: query
+          name: transactionId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Transaction found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Transaction' }
+        '404': { description: Transaction not found }
+  /transactions/{transactionId}/reversal:
+    post:
+      operationId: reverseTransaction
+      summary: Record a new transaction with the original entries flipped
+      parameters:
+        - in: path
+          name: transactionId
+          required: true
+          schema: { type: string, format: uuid }
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 1 }
+      responses:
+        '201':
+          description: Reversal recorded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Transaction' }
+        '404': { description: Original transaction not found }
+        '409': { description: Already reversed or reversal violates an overdraft limit }
+components:
+  schemas:
+    CreateAccountRequest:
+      type: object
+      required: [currency]
+      properties:
+        currency: { type: string, enum: [EUR, USD, JPY] }
+        overdraftLimit: { type: string, pattern: '^[0-9]+(\\.[0-9]+)?$' }
+    Account:
+      type: object
+      required: [id, currency, overdraftLimit, balance, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        currency: { type: string, enum: [EUR, USD, JPY] }
+        overdraftLimit: { type: string }
+        balance: { type: string }
+        createdAt: { type: string, format: date-time }
+    RecordTransactionRequest:
+      type: object
+      required: [description, entries]
+      properties:
+        description: { type: string, minLength: 1 }
+        entries:
+          type: array
+          minItems: 2
+          items: { $ref: '#/components/schemas/EntryRequest' }
+    EntryRequest:
+      type: object
+      required: [accountId, direction, amount]
+      properties:
+        accountId: { type: string, format: uuid }
+        direction: { type: string, enum: [DEBIT, CREDIT] }
+        amount: { type: string, pattern: '^[0-9]+(\\.[0-9]+)?$' }
+    Transaction:
+      type: object
+      required: [id, description, recordedAt, entries]
+      properties:
+        id: { type: string, format: uuid }
+        description: { type: string }
+        recordedAt: { type: string, format: date-time }
+        reversalOf: { type: [string, 'null'], format: uuid }
+        entries:
+          type: array
+          items: { $ref: '#/components/schemas/EntryRequest' }
