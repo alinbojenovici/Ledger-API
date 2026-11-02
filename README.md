@@ -116,17 +116,19 @@ Run the Docker-free service unit tests:
 ./mvnw -Dtest=AccountServiceImplementationTest,TransactionServiceImplementationTest test
 ```
 
-Run the MySQL integration test (requires Docker running):
+Run the MySQL integration test (requires Docker installed and running):
 
 ```bash
 ./mvnw -Dtest=LedgerMySqlIntegrationTest test
 ```
 
-The integration test starts a disposable MySQL container, applies Flyway migrations, records a transfer, and reverses it. Running all tests also includes that Docker-backed test:
+The integration test starts a disposable MySQL container and applies Flyway migrations. It covers a successful transfer and reversal, and verifies an overdraft refusal leaves account balances, transactions, and entries unchanged. This test has not been run in environments without Docker. Running all tests also includes this Docker-backed test:
 
 ```bash
 ./mvnw test
 ```
+
+The service unit tests have been run successfully. The MySQL integration test compiles, but its runtime behavior remains unverified here because Docker is not installed. Without Docker, run the unit-test command above.
 
 ## Database and project structure
 
@@ -134,4 +136,4 @@ Flyway migrations are in `src/main/resources/db/migration`. Tables use the `LA_`
 
 ## Current scope and follow-up
 
-Payment-settled message consumption and reliable transaction announcements are not implemented yet. The existing unit tests use mocked repositories; concurrency, crash recovery, and database rollback guarantees still need broader integration coverage. The MySQL integration test currently covers a successful transaction and reversal flow.
+Payment-settled message consumption and reliable transaction announcements are out of scope for this implementation. Integration coverage currently checks successful recording/reversal and that an overdraft refusal leaves no database changes. Concurrency, crash recovery, and cross-instance idempotency still need additional integration tests.
